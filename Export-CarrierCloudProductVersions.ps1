@@ -47,8 +47,6 @@ FROM
     StProductVersions b WITH (NOLOCK)
 JOIN
     StCustomerDetails a WITH (NOLOCK) ON a.stsid = b.stsid
-LEFT OUTER JOIN
-    StProductVoipPeeringPlatformLevel c WITH (NOLOCK) ON b.stsid = c.stsid
 ORDER BY
     [Customer], [platform]
 '@
