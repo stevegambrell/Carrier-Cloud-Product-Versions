@@ -3,39 +3,47 @@
     Exports carrier cloud product versions from StServer to a quoted CSV file.
 
 .DESCRIPTION
-    Runs the StProductVersions query against SQL Server and writes
-    D:\Carrier-Cloud-Product-Versions.csv (by default). Every field is
-    comma-separated and wrapped in double quotes. Embedded quotes are escaped
-    by doubling them.
+    Runs the StProductVersions query against SQL Server and writes a CSV to
+    the supplied output path. Every field is comma-separated and wrapped in
+    double quotes. Embedded quotes are escaped by doubling them.
 
-    Uses Windows integrated authentication unless -Username is supplied.
+    SQL authentication uses a PSCredential loaded from cred.xml:
+
+        $cred = Import-Clixml cred.xml
+
+    Create that file once, as the same Windows user that will run the export:
+
+        Get-Credential | Export-Clixml -Path .\cred.xml
+
+.PARAMETER OutputPath
+    Destination CSV file path.
 
 .EXAMPLE
-    .\Export-CarrierCloudProductVersions.ps1
-
-.EXAMPLE
-    .\Export-CarrierCloudProductVersions.ps1 -Username 'reporting' -Password $cred.Password
+    .\Export-CarrierCloudProductVersions.ps1 'D:\Carrier-Cloud-Product-Versions.csv'
 #>
 [CmdletBinding()]
 param(
+    [Parameter(Mandatory = $true, Position = 0)]
+    [string]$OutputPath,
+
     [string]$Server = '10.3.0.10',
     [string]$Database = 'StServer',
-    [string]$OutputPath = 'D:\Carrier-Cloud-Product-Versions.csv',
-    [string]$Username,
-    [SecureString]$Password
+    [string]$CredentialPath
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $rowCount = 0
 
-if ($Username -and -not $Password) {
-    throw 'A -Password SecureString is required when -Username is specified.'
+if (-not $CredentialPath) {
+    $CredentialPath = Join-Path $PSScriptRoot 'cred.xml'
 }
 
-if ($Password -and -not $Username) {
-    throw '-Username is required when -Password is specified.'
+if (-not (Test-Path -LiteralPath $CredentialPath)) {
+    throw "Credential file not found: $CredentialPath. Create it with: Get-Credential | Export-Clixml -Path '$CredentialPath'"
 }
+
+$cred = Import-Clixml $CredentialPath
 
 $query = @'
 SELECT
@@ -72,27 +80,12 @@ function Get-SqlConnectionString {
     $builder = New-Object System.Data.SqlClient.SqlConnectionStringBuilder
     $builder['Data Source'] = $Server
     $builder['Initial Catalog'] = $Database
+    $builder['Integrated Security'] = $false
+    $builder['User ID'] = $cred.UserName
+    $builder['Password'] = $cred.GetNetworkCredential().Password
     $builder['TrustServerCertificate'] = $true
     $builder['Encrypt'] = $true
     $builder['Connect Timeout'] = 30
-
-    if ($Username) {
-        $builder['Integrated Security'] = $false
-        $builder['User ID'] = $Username
-        if ($Password) {
-            $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($Password)
-            try {
-                $builder['Password'] = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr)
-            }
-            finally {
-                [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
-            }
-        }
-    }
-    else {
-        $builder['Integrated Security'] = $true
-    }
-
     return $builder.ConnectionString
 }
 
@@ -109,7 +102,7 @@ $command.CommandText = $query
 $command.CommandTimeout = 300
 
 try {
-    Write-Host "Connecting to $Server / $Database ..."
+    Write-Host "Connecting to $Server / $Database as $($cred.UserName) ..."
     $connection.Open()
 
     $reader = $command.ExecuteReader()
